@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudVault - AWS Serverless Storage</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .vault-card { max-width: 650px; margin: 50px auto; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="card vault-card p-4 bg-white">
+            <h3 class="text-primary fw-bold mb-1">☁️ CloudVault</h3>
+            <p class="text-muted small mb-4">AWS Serverless Storage Application</p>
+            <hr>
+
+            <!-- Upload Section -->
+            <div class="mb-4">
+                <label class="form-label fw-bold">Upload File to S3</label>
+                <div class="input-group">
+                    <input type="file" class="form-control" id="fileInput">
+                    <button class="btn btn-primary" onclick="uploadFile()">Upload</button>
+                </div>
+            </div>
+
+            <!-- File List & Search Section -->
+            <div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold mb-0">Your Files in S3</h5>
+                    <!-- Search Input -->
+                    <input type="text" id="searchInput" class="form-control form-control-sm w-50" placeholder="🔍 Search files..." onkeyup="filterFiles()">
+                </div>
+                
+                <p id="loading" class="text-muted">Loading files...</p>
+                <ul class="list-group" id="fileList"></ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "https://n22zttshhe.execute-api.us-east-1.amazonaws.com/files";
+
+        async function fetchFiles() {
+            const fileListElement = document.getElementById("fileList");
+            const loadingElement = document.getElementById("loading");
+
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+
+                if (loadingElement) loadingElement.style.display = "none";
+                fileListElement.innerHTML = "";
+
+                if (!data.files || data.files.length === 0) {
+                    fileListElement.innerHTML = '<li class="list-group-item text-muted text-center py-3">No files stored in bucket.</li>';
+                    return;
+                }
+
+                data.files.forEach(filename => {
+                    const listItem = document.createElement("li");
+                    listItem.className = "list-group-item d-flex justify-content-between align-items-center file-item";
+                    
+                    const safeFileName = filename.replace(/'/g, "\\'");
+
+                    listItem.innerHTML = `
+                        <span class="file-name text-truncate" style="max-width: 280px;">📄 ${filename}</span>
+                        <div>
+                            <button class="btn btn-sm btn-outline-success me-2" onclick="downloadFile('${safeFileName}')">Download</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteFile('${safeFileName}')">Delete</button>
+                        </div>
+                    `;
+                    fileListElement.appendChild(listItem);
+                });
+            } catch (error) {
+                console.error("Error fetching files:", error);
+                if (loadingElement) {
+                    loadingElement.innerText = "Error connecting to API Gateway.";
+                    loadingElement.className = "text-danger";
+                }
+            }
+        }
+
+    function filterFiles() {
+    const query = document.getElementById("searchInput").value.toLowerCase().trim();
+    const items = document.querySelectorAll("#fileList .file-item");
+
+    items.forEach(item => {
+        const nameElement = item.querySelector(".file-name");
+        
+        // Cache original text name
+        if (!nameElement.getAttribute("data-original-name")) {
+            nameElement.setAttribute("data-original-name", nameElement.textContent.replace("📄 ", ""));
+        }
+        const originalText = nameElement.getAttribute("data-original-name");
+
+        if (query === "") {
+            item.style.setProperty("display", "flex", "important");
+            nameElement.innerHTML = `📄 ${originalText}`;
+        } else if (originalText.toLowerCase().includes(query)) {
+            item.style.setProperty("display", "flex", "important");
+            
+            // Highlight matching string
+            const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, "gi");
+            const highlightedText = originalText.replace(regex, `<mark class="bg-warning text-dark p-0">$1</mark>`);
+            
+            nameElement.innerHTML = `📄 ${highlightedText}`;
+        } else {
+            // Hide non-matching rows
+            item.style.setProperty("display", "none", "important");
+            nameElement.innerHTML = `📄 ${originalText}`;
+        }
+    });
+}
+
+        async function uploadFile() {
+            const fileInput = document.getElementById("fileInput");
+            const file = fileInput.files[0];
+
+            if (!file) {
+                alert("Please choose a file first!");
+                return;
+            }
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ fileName: file.name, action: "upload" })
+                });
+
+                const data = await response.json();
+
+                if (!data.uploadUrl) {
+                    alert("Error: " + (data.error || "Could not get upload authorization."));
+                    return;
+                }
+
+                const uploadResponse = await fetch(data.uploadUrl, {
+                    method: "PUT",
+                    body: file
+                });
+
+                if (uploadResponse.ok) {
+                    alert("File uploaded successfully!");
+                    fileInput.value = "";
+                    fetchFiles();
+                } else {
+                    alert("S3 Upload Failed with status: " + uploadResponse.status);
+                }
+            } catch (error) {
+                console.error("Upload error:", error);
+                alert("Upload request failed.");
+            }
+        }
+
+        async function downloadFile(filename) {
+            try {
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ fileName: filename, action: "download" })
+                });
+
+                const data = await response.json();
+
+                if (data.downloadUrl) {
+                    window.open(data.downloadUrl, '_blank');
+                } else {
+                    alert("Error generating download link.");
+                }
+            } catch (error) {
+                console.error("Download error:", error);
+                alert("Failed to download file.");
+            }
+        }
+
+        async function deleteFile(filename) {
+            if (!confirm(`Are you sure you want to delete "${filename}"?`)) return;
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ fileName: filename })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert("File deleted successfully!");
+                    fetchFiles();
+                } else {
+                    alert("Error: " + (data.error || "Failed to delete file."));
+                }
+            } catch (error) {
+                console.error("Delete error:", error);
+                alert("Delete request failed.");
+            }
+        }
+
+        fetchFiles();
+    </script>
+</body>
+</html>
